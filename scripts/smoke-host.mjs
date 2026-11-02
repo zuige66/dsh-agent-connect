@@ -247,19 +247,30 @@ if (typeof route?.handler === 'function') {
   }
   const connection = { rpc }
 
-  /** Run one tick through the real fiber, with a stubbed clock interval. */
-  const tickScope = () => ({
-    logger: ctx.logger,
-    effect: (fn, label) => runEffect(fn, label),
-    get: key => (key === 'connection' ? connection : services.get(key)),
-    inject: () => {},
-    provide: () => {},
-    emit: () => {},
-    on: () => {},
-    credentials: { resolve: async () => undefined },
-    commands: { register: () => {} },
-    llm: { listProviders: async () => [], listModels: async () => [] },
-  })
+  /**
+   * Run one tick through the real fibers.
+   *
+   * The background jobs live on a nested `inject(['connection'])` fiber, so the
+   * stub has to forward `inject` the way cordis does — running the callback
+   * immediately with a scope that now carries `connection`.
+   */
+  const tickScope = () => {
+    const scope = {
+      logger: ctx.logger,
+      effect: (fn, label) => runEffect(fn, label),
+      get: key => (key === 'connection' ? connection : services.get(key)),
+      provide: () => {},
+      emit: () => {},
+      on: () => {},
+      credentials: { resolve: async () => undefined },
+      commands: { register: () => {} },
+      llm: { listProviders: async () => [], listModels: async () => [] },
+    }
+    // Nesting: the plugin calls scoped.inject(['connection'], cb); hand cb a
+    // scope whose `connection` is the stub.
+    scope.inject = (names, callback) => callback({ ...scope, connection })
+    return scope
+  }
 
   // The fiber arms a timer; the test drives the tick directly rather than
   // waiting an hour, so it re-uses the module's own logic through the interval
@@ -303,6 +314,73 @@ if (typeof route?.handler === 'function') {
     await new Promise(resolve => setTimeout(resolve, 30))
     check(calls.length === 1, `a tick with check-in off made ${calls.length} call(s), expected 1 read`)
     check(calls[0]?.enabled === undefined, 'a tick with check-in off still wrote `enabled`')
+  }
+}
+
+// ── the "show all models" pass ─────────────────────────────────────────────
+// The property that matters: it only re-enables a channel whose **entire**
+// catalog is hidden. A channel that shows even one model is left alone, so a
+// deliberate choice to hide a model survives the pass.
+{
+  /** One scripted answer per channel, plus every call made. */
+  let catalog = {}
+  const seen = []
+
+  const rpc = {
+    call: async (_base, _endpoint, request) => {
+      const { method, payload } = request
+      seen.push({ method, provider: payload?.provider, disabled: payload?.disabled })
+      if (method === 'model.list') return { ok: true, value: { models: catalog[payload.provider] ?? [] } }
+      return { ok: true, value: undefined }
+    },
+  }
+  const connection = { rpc }
+
+  const scope = {
+    logger: ctx.logger,
+    effect: (fn, label) => runEffect(fn, label),
+    get: key => (key === 'connection' ? connection : services.get(key)),
+    provide: () => {}, emit: () => {}, on: () => {},
+    credentials: { resolve: async () => undefined },
+    commands: { register: () => {} },
+    llm: { listProviders: async () => [], listModels: async () => [] },
+  }
+  // Forward nested inject the way cordis does.
+  scope.inject = (names, callback) => callback({ ...scope, connection })
+
+  /** Capture the setTimeout the pass schedules, then run it on demand. */
+  const armed = []
+  const originalSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms) => { armed.push({ fn, ms }); return 0 }
+  try {
+    tickInject.callback(scope)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+
+  check(armed.length === 1, `the model pass armed ${armed.length} timer(s), expected 1`)
+  check(armed[0]?.ms === 20_000, `the model pass delays ${armed[0]?.ms}ms, expected 20000`)
+
+  if (armed.length > 0) {
+    // Three shapes: a fully hidden channel (must be re-enabled), a partly
+    // hidden one (must be left alone), and one with no models at all (skip).
+    catalog = {
+      buddy: [{ id: 'a', disabled: true }, { id: 'b', disabled: true }],
+      workbuddy: [{ id: 'c' }, { id: 'd', disabled: true }],
+      trae: [],
+    }
+    seen.length = 0
+    await armed[0].fn()
+    await new Promise(resolve => setTimeout(resolve, 60))
+
+    const writes = seen.filter(row => row.method === 'model.setAllDisabled')
+    check(writes.length === 1, `${writes.length} channel(s) were re-enabled, expected exactly 1`)
+    check(writes[0]?.provider === 'buddy', `re-enabled ${writes[0]?.provider}, expected buddy (the fully hidden one)`)
+    check(writes[0]?.disabled === false, 'the re-enable did not pass disabled: false')
+
+    // The partly-hidden channel must never have been written to.
+    const touchedWorkbuddy = writes.some(row => row.provider === 'workbuddy')
+    check(touchedWorkbuddy === false, 'a partly-hidden channel was re-enabled, overriding the user\'s choice')
   }
 }
 
