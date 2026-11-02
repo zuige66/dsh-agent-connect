@@ -382,6 +382,53 @@
 .acx-usage-chan-val { color: var(--ink); font-variant-numeric: tabular-nums }
 .acx-usage-chan-req { color: var(--faint); font-size: 11.5px }
 
+/* ── the two-view strip ────────────────────────────────────────────────── */
+.acx-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); padding-bottom: 0 }
+.acx-tabs button {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .14s ease, border-color .14s ease;
+}
+.acx-tabs button:hover { color: var(--ink) }
+.acx-tabs button[data-on="true"] { color: var(--ink); border-bottom-color: var(--ink) }
+
+/* ── the model-visibility view ─────────────────────────────────────────── */
+.acx-models-view { display: flex; flex-direction: column; gap: 12px }
+.acx-models-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px var(--pad) 18px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-models-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.acx-models-headmain { flex: 1 1 180px; min-width: 0 }
+.acx-models-headmain b { display: block; font-size: 14px; font-weight: 500 }
+.acx-models-headmain span { display: block; font-size: 12px; color: var(--faint); margin-top: 1px }
+
+.acx-foldtoggle {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  cursor: pointer;
+}
+.acx-foldtoggle:hover { color: var(--ink) }
+
 /* ── states ────────────────────────────────────────────────────────────── */
 .acx-note { margin: 0; font-size: 13px; color: var(--muted) }
 .acx-note.bad { color: var(--bad) }

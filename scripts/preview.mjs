@@ -61,6 +61,13 @@ const fixtures = {
     ],
   },
   models: {
+    __default: [
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' },
+      { id: 'kimi-k3', name: 'Kimi K3' },
+      { id: 'glm-5-flash', name: 'GLM 5 Flash' },
+      { id: 'hunyuan-t1', name: 'Hunyuan T1', disabled: true },
+      { id: 'minimax-m2', name: 'MiniMax M2' },
+    ],
     buddy: [
       { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
       { id: 'kimi-k3', name: 'Kimi K3' },
@@ -506,7 +513,7 @@ async function rpcCall(_base, _endpoint, request) {
     case 'gateway.getEnabled': return { ok: true, value: FIXTURES.gateway };
     case 'usage.tokenLedgerHistory': return { ok: true, value: { history: FIXTURES.usage.days, totals: FIXTURES.usage.totals } };
     case 'account.list': return { ok: true, value: { accounts: FIXTURES.accounts[provider] || [] } };
-    case 'model.list': return { ok: true, value: { models: FIXTURES.models[provider] || [] } };
+    case 'model.list': return { ok: true, value: { models: FIXTURES.models[provider] || FIXTURES.models.__default || [] } };
     case 'credits.balances': {
       const total = FIXTURES.balances[provider];
       return { ok: true, value: { accounts: total === undefined ? [] : [{ accountId: 'x', balance: { total } }] } };
@@ -577,6 +584,23 @@ function render(node) {
 // prefix must exist *before* the bundle body runs, because the component tree
 // is rendered at the end of this script.
 window.fetch = async () => ({ ok: true, text: async () => JSON.stringify({ channels: { state: 'ready', error: '' } }) });
+// The page remembers which view was open; the preview starts on the one named
+// by PREVIEW_VIEW so a screenshot can be taken of either.
+//
+// window.localStorage is a read-only accessor in a real browser — a plain
+// assignment is silently ignored, which is why the page kept opening on the
+// channels view. Redefining the property is the only way to stub it.
+const PREVIEW_VIEW = '${process.env.PREVIEW_VIEW ?? 'channels'}';
+const previewStorage = {
+  getItem: key => (key === 'acx.view' ? PREVIEW_VIEW : null),
+  setItem: () => {},
+  removeItem: () => {},
+};
+try {
+  Object.defineProperty(window, 'localStorage', { value: previewStorage, configurable: true });
+} catch {
+  window.localStorage = previewStorage;
+}
 const API = '/api/agent-channels';
 
 ${bundle.slice(bundle.indexOf('    const CHANNEL_ICONS'), bundle.indexOf('    // ══ styles')).replace(/^ {4}/gm, '')}

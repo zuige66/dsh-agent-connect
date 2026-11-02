@@ -137,6 +137,15 @@ const DICT = {
     loadFailed: '读不到渠道后端',
     retry: '重试',
 
+    'tab.channels': '渠道',
+    'tab.models': '模型',
+
+    'models.sub': '每个渠道单独选择哪些模型出现在模型选择器里。关掉的不会消失，只是不再列出来——随时可以再打开。',
+    'models.none': '还没有已接入的渠道。先在「渠道」页登录一个，再回来挑模型。',
+    'models.count': '显示 {on} / {total}',
+    'models.show': '展开',
+    'models.hide': '收起',
+
     'fig.connected': '已接入渠道',
     'fig.accounts': '账号',
     'fig.credit': '积分余额',
@@ -262,6 +271,15 @@ const DICT = {
     loadFailed: 'Cannot reach the channel backend',
     retry: 'Retry',
 
+    'tab.channels': 'Channels',
+    'tab.models': 'Models',
+
+    'models.sub': 'Choose, per channel, which models appear in the model picker. A hidden model is not deleted — it just stops being listed, and you can turn it back on any time.',
+    'models.none': 'No channels connected yet. Sign in to one on the Channels tab, then come back to pick models.',
+    'models.count': '{on} of {total} shown',
+    'models.show': 'Show',
+    'models.hide': 'Hide',
+
     'fig.connected': 'Channels on',
     'fig.accounts': 'Accounts',
     'fig.credit': 'Credits',
@@ -382,6 +400,9 @@ const DICT = {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/** Which view the section was last on, so a reload returns to it. */
+const VIEW_KEY = 'acx.view'
 
 /** The plugin's own two routes; everything else goes over RPC. */
 async function api(path, options) {
@@ -1177,7 +1198,138 @@ function UsagePanel({ t, days, totals }) {
 }
 
 /**
+ * The model-visibility view: one panel per connected channel, every model a
+ * switch.
+ * The same `model.setDisabled` call already lived inside each channel's fold,
+ * which meant choosing what the picker shows took two clicks of drilling and
+ * looked like a settings afterthought. Models are the thing people come back to
+ * adjust most often, so they get their own view where all thirteen channels'
+ * lists are laid out at once and a switch is one click.
+ *
+ * @param {object} props
+ * @param {(key: string) => string} props.t
+ * @param {object} props.rpc
+ * @param {object} props.statuses
+ * @param {Array} props.channels
+ * @param {(error: unknown) => void} props.onError
+ * @param {() => void} props.onChanged
+ */
+function ModelsView({ t, rpc, statuses, channels, onError, onChanged }) {
+  // Per-channel model lists, fetched lazily: thirteen channels × N models is a
+  // lot of RPC on a view someone may only glance at.
+  const [lists, setLists] = useState({})
+  const [busy, setBusy] = useState('')
+  const [open, setOpen] = useState({})
+
+  /** Only channels with an account: an empty channel has nothing to configure. */
+  const connected = useMemo(
+    () => channels.filter(channel => (statuses?.[channel.id]?.accounts?.enabled ?? 0) > 0),
+    [channels, statuses],
+  )
+
+  const load = useCallback(async channelId => {
+    try {
+      const value = await rpc('model.list', { provider: channelId })
+      setLists(current => ({ ...current, [channelId]: value?.models ?? [] }))
+    } catch (error) {
+      setLists(current => ({ ...current, [channelId]: [] }))
+      onError(error)
+    }
+  }, [rpc, onError])
+
+  // Load every connected channel's list once, in parallel — the counts in the
+  // section headers need them, so they cannot wait for an expand.
+  useEffect(() => {
+    for (const channel of connected) {
+      if (lists[channel.id] === undefined) void load(channel.id)
+    }
+  }, [connected, lists, load])
+
+  const toggle = async (channelId, model) => {
+    if (busy !== '') return
+    setBusy(`${channelId}:${model.id}`)
+    try {
+      await rpc('model.setDisabled', { provider: channelId, modelId: model.id, disabled: model.disabled !== true })
+      await load(channelId)
+      onChanged()
+    } catch (error) { onError(error) } finally { setBusy('') }
+  }
+
+  const setAll = async (channelId, disabled) => {
+    if (busy !== '') return
+    setBusy(`${channelId}:*`)
+    try {
+      await rpc('model.setAllDisabled', { provider: channelId, disabled })
+      await load(channelId)
+      onChanged()
+    } catch (error) { onError(error) } finally { setBusy('') }
+  }
+
+  if (connected.length === 0) {
+    return h('div', { className: 'acx-models-view' },
+      h('div', { className: 'acx-empty' }, t('models.none')))
+  }
+
+  return h('div', { className: 'acx-models-view' },
+    h('p', { className: 'acx-sub' }, t('models.sub')),
+
+    connected.map(channel => {
+      const models = lists[channel.id]
+      const shown = (models ?? []).filter(model => model.disabled !== true).length
+      const total = (models ?? []).length
+      const expanded = open[channel.id] === true
+      const loading = models === undefined
+
+      // The body is built before the section so the ternary chain stays flat;
+      // three levels of nesting inside one createElement is how the closing
+      // parens went wrong.
+      const body = loading
+        ? h('div', { className: 'acx-skel', style: { width: '60%', margin: '10px 0 4px' } })
+        : total === 0
+          ? h('p', { className: 'acx-note' }, t('fold.noModels'))
+          : expanded
+            ? h('div', { className: 'acx-models' }, models.map(model => h('label', {
+              className: 'acx-model' + (model.disabled === true ? ' off' : ''),
+              key: model.id,
+            },
+              h('input', {
+                type: 'checkbox',
+                checked: model.disabled !== true,
+                disabled: busy !== '',
+                onChange: () => void toggle(channel.id, model),
+              }),
+              h('span', { className: 'acx-model-name', title: model.id }, model.name ?? model.id))))
+            : null
+      return h('section', { className: 'acx-models-group', key: channel.id },
+        h('div', { className: 'acx-models-head' },
+          h(Mark, { channel }),
+          h('div', { className: 'acx-models-headmain' },
+            h('b', null, channel.name),
+            h('span', null, loading
+              ? t('loading')
+              : t('models.count').replace('{on}', String(shown)).replace('{total}', String(total)))),
+          total > 0 ? h(Button, { kind: 'quiet', disabled: busy !== '', onClick: () => void setAll(channel.id, false) },
+            t('act.enableAll')) : null,
+          total > 0 ? h(Button, { kind: 'quiet', disabled: busy !== '', onClick: () => void setAll(channel.id, true) },
+            t('act.disableAll')) : null,
+          h('button', {
+            type: 'button',
+            className: 'acx-foldtoggle',
+            'aria-expanded': expanded ? 'true' : 'false',
+            onClick: () => setOpen(current => ({ ...current, [channel.id]: !expanded })),
+          }, expanded ? t('models.hide') : t('models.show'))),
+        body)
+    }))
+}
+
+
+/**
  * The page.
+ *
+ * Two views behind one tab strip: the channel table (what am I signed into, and
+ * what do I need to claim) and the model switches (what should the picker show).
+ * They answer different questions and mixing them pushed the model list below a
+ * thirteen-row table.
  *
  * Reads the pack's mount state, then every channel's status in one RPC, then
  * the per-channel balances in parallel. The order matters: the status call is
@@ -1192,6 +1344,13 @@ function Page(props) {
   // undefined and every relative date falls back to English.
   const t = props.locale === undefined ? props.t : Object.assign(x => props.t(x), { locale: props.locale })
   const { available, rpc } = useChannelRpc(ctx)
+  /** Which of the two views is showing; remembered across reloads. */
+  const [view, setView] = useState(() => {
+    try { return window.localStorage?.getItem(VIEW_KEY) === 'models' ? 'models' : 'channels' } catch { return 'channels' }
+  })
+  useEffect(() => {
+    try { window.localStorage?.setItem(VIEW_KEY, view) } catch { /* storage unavailable */ }
+  }, [view])
   const [statuses, setStatuses] = useState(undefined)
   const [error, setError] = useState('')
   const [ready, setReady] = useState(false)
@@ -1416,38 +1575,67 @@ function Page(props) {
           claiming ? t('act.claiming') : t('act.claimAll')),
         h(Button, { kind: 'quiet', disabled: claiming, onClick: () => { void loadStatus(); void loadBalances() } }, t('act.refresh')))),
 
-    h(Figures, { t, totals }),
+    // Two views, one strip. The model switches used to live two clicks deep
+    // inside a channel's fold; they answer a different question from the table,
+    // so they get their own view rather than a section below it.
+    h('div', { className: 'acx-tabs', role: 'tablist' },
+      h('button', {
+        type: 'button', role: 'tab',
+        'aria-selected': view === 'channels' ? 'true' : 'false',
+        'data-on': view === 'channels' ? 'true' : 'false',
+        onClick: () => setView('channels'),
+      }, t('tab.channels')),
+      h('button', {
+        type: 'button', role: 'tab',
+        'aria-selected': view === 'models' ? 'true' : 'false',
+        'data-on': view === 'models' ? 'true' : 'false',
+        onClick: () => setView('models'),
+      }, t('tab.models'))),
 
-    auto === undefined || auto === null ? null : h('div', { className: 'acx-strip' },
-      h(Switch, { checked: auto.enabled === true, onChange: () => void toggleAuto(), label: t('checkin.title') }),
-      h('div', { className: 'acx-strip-main' },
-        h('b', null, t('checkin.title')),
-        h('span', null, auto.lastResult !== '' && auto.lastResult !== undefined
-          ? t('checkin.last').replace('{result}', auto.lastResult)
-          : t('checkin.hint'))),
-      h('span', { className: 'acx-state' },
-        h('span', { className: `acx-dot ${auto.running === true ? 'warn' : auto.ranToday === true ? 'ok' : ''}` }),
-        auto.running === true ? t('checkin.running') : auto.ranToday === true ? t('checkin.ran') : t('checkin.off'))),
-
-    h('div', { className: 'acx-table' },
-      h('div', { className: 'acx-thead' },
-        h('span', null),
-        h('span', null, t('col.channel')),
-        h('span', null, t('col.state')),
-        h('span', { className: 'r' }, t('col.accounts')),
-        h('span', { className: 'r' }, t('col.models')),
-        h('span', { className: 'r' }, t('col.credit')),
-        h('span', null)),
-      orderedChannels.map(channel => h(ChannelRow, {
-        key: channel.id,
+    view === 'models'
+      ? h(ModelsView, {
         t,
-        channel,
-        status: statuses?.[channel.id],
         rpc,
+        statuses,
+        channels: orderedChannels,
         onError: notify,
         onChanged: () => { void loadStatus(); void loadBalances() },
-      }))),
+      })
+      : h(Fragment, null,
+        h(Figures, { t, totals }),
 
+        auto === undefined || auto === null ? null : h('div', { className: 'acx-strip' },
+          h(Switch, { checked: auto.enabled === true, onChange: () => void toggleAuto(), label: t('checkin.title') }),
+          h('div', { className: 'acx-strip-main' },
+            h('b', null, t('checkin.title')),
+            h('span', null, auto.lastResult !== '' && auto.lastResult !== undefined
+              ? t('checkin.last').replace('{result}', auto.lastResult)
+              : t('checkin.hint'))),
+          h('span', { className: 'acx-state' },
+            h('span', { className: `acx-dot ${auto.running === true ? 'warn' : auto.ranToday === true ? 'ok' : ''}` }),
+            auto.running === true ? t('checkin.running') : auto.ranToday === true ? t('checkin.ran') : t('checkin.off'))),
+
+        h('div', { className: 'acx-table' },
+          h('div', { className: 'acx-thead' },
+            h('span', null),
+            h('span', null, t('col.channel')),
+            h('span', null, t('col.state')),
+            h('span', { className: 'r' }, t('col.accounts')),
+            h('span', { className: 'r' }, t('col.models')),
+            h('span', { className: 'r' }, t('col.credit')),
+            h('span', null)),
+          orderedChannels.map(channel => h(ChannelRow, {
+            key: channel.id,
+            t,
+            channel,
+            status: statuses?.[channel.id],
+            rpc,
+            onError: notify,
+            onChanged: () => { void loadStatus(); void loadBalances() },
+          })))),
+
+    // Below the views, and shown on both: the endpoint and the usage figures
+    // are properties of the whole plugin, not of whichever tab is open.
     gateway === undefined || gateway === null ? null : h(ApiPanel, {
       t,
       gateway,
@@ -1854,6 +2042,53 @@ function Page(props) {
 .acx-usage-chan-name { color: var(--muted) }
 .acx-usage-chan-val { color: var(--ink); font-variant-numeric: tabular-nums }
 .acx-usage-chan-req { color: var(--faint); font-size: 11.5px }
+
+/* ── the two-view strip ────────────────────────────────────────────────── */
+.acx-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); padding-bottom: 0 }
+.acx-tabs button {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .14s ease, border-color .14s ease;
+}
+.acx-tabs button:hover { color: var(--ink) }
+.acx-tabs button[data-on="true"] { color: var(--ink); border-bottom-color: var(--ink) }
+
+/* ── the model-visibility view ─────────────────────────────────────────── */
+.acx-models-view { display: flex; flex-direction: column; gap: 12px }
+.acx-models-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px var(--pad) 18px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-models-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.acx-models-headmain { flex: 1 1 180px; min-width: 0 }
+.acx-models-headmain b { display: block; font-size: 14px; font-weight: 500 }
+.acx-models-headmain span { display: block; font-size: 12px; color: var(--faint); margin-top: 1px }
+
+.acx-foldtoggle {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  cursor: pointer;
+}
+.acx-foldtoggle:hover { color: var(--ink) }
 
 /* ── states ────────────────────────────────────────────────────────────── */
 .acx-note { margin: 0; font-size: 13px; color: var(--muted) }
