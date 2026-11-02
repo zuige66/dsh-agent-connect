@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent Channels",
+    "description": "Bring thirteen agent account channels — CodeArts, CodeBuddy / WorkBuddy, LobsterAI, Qoder, TRAE, Cline, Loomy, Raccoon, MiniMax Code, ZCode and Gemini — into DeepSeek Harness. Sign in once and their models appear in the composer's model picker. Credentials go to the local credential store only."
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "name": "dsh-agent-connect",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Channels — 把 CodeArts、CodeBuddy / WorkBuddy、LobsterAI、Qoder、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini 等十三个 agent 账号渠道接进 dsh：登录、账号池、每日积分领取、模型开关，一页搞定。只做渠道接入，不含免费车道、聚合渠道、看板、网关等其它功能。",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src/channels.data.js",
+    "src/ui.js",
+    "src/page.css",
+    "src/trust.js",
+    "src/open-external.js",
+    "src/lan-gateway.js",
+    "vendor/channel-pack/pack.js",
+    "vendor/channel-pack/qoder-auth-wasm.wasm",
+    "vendor/channel-pack/NOTICE.md",
+    "vendor/channel-pack/LICENSE",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "agent-channels",
+    "llm-provider"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-commands": "^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-credentials": "^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  }
+}

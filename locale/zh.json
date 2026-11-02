@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent 渠道",
+    "description": "把 CodeArts、CodeBuddy / WorkBuddy、LobsterAI、Qoder、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini 等十三个 agent 账号渠道接进 DeepSeek Harness：登录一次，模型就出现在对话框的模型选择器里。凭据只写入本机凭据库。"
+  }
+}

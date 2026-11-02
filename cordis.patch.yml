@@ -1,0 +1,9 @@
+# dsh-agent-connect bundle patch.
+#
+# One insert mounts the Host half. The browser half is declared by
+# package.json's dsh.client and binds to the bare-package-name line — a
+# subpath line would not carry it.
+- insert:
+    - id: agent-channels
+      name: 'dsh-agent-connect'
+      config: {}

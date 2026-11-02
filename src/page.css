@@ -1,0 +1,496 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Agent Channels — the page.
+
+   Direction: elevation by lightness alone. A card is separated from the page by
+   one step in tone, never by a border, a shadow or a gradient. Colour appears in
+   exactly one place: the credit figure, which is the data this screen exists to
+   show. Buttons and navigation stay in ink; the primary action is made primary
+   by inversion.
+
+   Every value comes from the host's --dsw-alias-* tokens, so the page follows
+   the app's light/dark switch without a second stylesheet. The two tokens the
+   host does not always define carry fallbacks — a var() that fails to resolve
+   is dropped *whole*, which would silently delete the surface it colours.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.acx {
+  --ground: var(--dsw-alias-bg-layer-3);  --surface: var(--dsw-alias-bg-layer-2);
+  --raised: var(--dsw-alias-bg-layer-1);
+  --rule: var(--dsw-alias-border-l1);
+  --ink: var(--dsw-alias-label-primary);
+  --muted: var(--dsw-alias-label-secondary);
+  --faint: var(--dsw-alias-label-tertiary);
+
+  /* The one hue on data: credits read as currency, so they are warm. Chosen to
+     hold contrast on both a white page and a near-black one. */
+  --credit: #c47a10;
+  --credit-strong: #a86209;
+
+  /* Status is the only other colour, and only as a 6px dot. */
+  --ok: var(--dsw-alias-state-success-primary, #2f9e64);
+  --warn: var(--dsw-alias-state-warning-primary, #b7791f);
+  --bad: var(--dsw-alias-state-error-primary, #c0392b);
+
+  --radius: 14px;
+  --gap: 14px;
+  --pad: 20px;
+  --row: 76px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 1080px;
+  /* Nothing on this page may push the settings column wider than its host. */
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  .acx { --credit: #e0a33a; --credit-strong: #f0b654; }
+}
+
+.acx * { box-sizing: border-box }
+.acx :focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── the title row ─────────────────────────────────────────────────────── */
+.acx-head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap }
+.acx-head-main { flex: 1; min-width: 240px }
+.acx-title { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2 }
+.acx-sub { margin: 6px 0 0; font-size: 14px; color: var(--muted); max-width: 62ch }
+.acx-head-acts { display: flex; align-items: center; gap: 8px }
+
+/* ── buttons: ink, not accent ──────────────────────────────────────────── */
+.acx-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color .15s ease, opacity .15s ease;
+}
+.acx-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 10%, var(--raised)) }
+.acx-btn:active:not(:disabled) { transform: translateY(1px) }
+.acx-btn:disabled { opacity: .45; cursor: default }
+.acx-btn.primary {
+  background: var(--ink);
+  color: var(--ground);
+  font-weight: 600;
+}
+.acx-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 84%, var(--ground)) }
+.acx-btn.quiet { background: transparent; color: var(--muted); padding: 0 10px }
+.acx-btn.quiet:hover:not(:disabled) { background: var(--raised); color: var(--ink) }
+.acx-btn.danger { background: transparent; color: var(--bad); padding: 0 10px }
+.acx-btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent) }
+
+/* ── the summary strip: four figures, type not tiles ───────────────────── */
+.acx-figures {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.acx-figure { background: var(--surface); padding: 16px var(--pad) 18px }
+.acx-figure b {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.acx-figure span { display: block; margin-top: 3px; font-size: 12px; color: var(--faint) }
+.acx-figure.is-credit b { color: var(--credit) }
+
+/* ── the channel table: rules and alignment, no zebra ──────────────────── */
+.acx-table { background: var(--surface); border-radius: var(--radius); overflow: hidden }
+.acx-thead, .acx-row-main {
+  display: grid;
+  grid-template-columns: 36px minmax(150px, 1fr) 112px 74px 92px 68px 26px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--pad);
+}
+.acx-thead {
+  height: 34px;
+  font-size: 11.5px;
+  color: var(--faint);
+  border-bottom: 1px solid var(--rule);
+}
+.acx-thead .r, .acx-num { text-align: right }
+/* On a wide screen the three figures are three grid cells of the row, not one
+   wrapper — display: contents lets them sit in the row's own grid while the
+   phone layout below turns the wrapper into a real flex line. */
+.acx-nums { display: contents }
+.acx-chan { border-bottom: 1px solid var(--rule) }
+.acx-chan:last-child { border-bottom: 0 }
+.acx-row-main { min-height: var(--row); cursor: pointer; background: transparent; border: 0; width: 100%; font: inherit; color: inherit; text-align: left; transition: background-color .12s ease }
+.acx-row-main:hover { background: var(--raised) }
+
+.acx-mark {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  display: grid; place-items: center;
+  overflow: hidden;
+  background: var(--raised);
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  letter-spacing: -0.02em;
+}
+.acx-mark img { width: 100%; height: 100%; object-fit: contain; display: block }
+
+.acx-id b { display: block; font-weight: 500; font-size: 14px; line-height: 1.3 }
+.acx-id span { display: block; font-size: 12px; color: var(--faint); line-height: 1.35; margin-top: 1px }
+
+.acx-num { font-variant-numeric: tabular-nums; font-size: 14px }
+.acx-num.credit { color: var(--credit); font-weight: 500 }
+.acx-num.empty { color: var(--faint) }
+.acx-unit { font-size: 11px; color: var(--faint); margin-left: 3px }
+
+.acx-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted) }
+.acx-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none }
+.acx-dot.ok { background: var(--ok) }
+.acx-dot.warn { background: var(--warn) }
+.acx-dot.bad { background: var(--bad) }
+
+.acx-caret {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  color: var(--faint);
+  transition: transform .18s ease;
+}
+.acx-caret[data-open="true"] { transform: rotate(90deg) }
+.acx-caret svg { width: 12px; height: 12px; fill: currentColor }
+
+/* ── the expanded fold ─────────────────────────────────────────────────── */
+.acx-fold { padding: 4px var(--pad) 18px 72px; display: flex; flex-direction: column; gap: 14px }
+.acx-fold h4 { margin: 0; font-size: 12px; font-weight: 500; color: var(--faint) }
+.acx-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+
+.acx-accts { display: flex; flex-direction: column }
+.acx-acct {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 118px 96px auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+}
+.acx-acct:first-child { border-top: 0 }
+.acx-acct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.acx-acct-name em { font-style: normal; color: var(--faint); font-size: 12px; margin-left: 6px }
+.acx-acct-meta { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums }
+.acx-acct-acts { display: flex; gap: 4px; justify-content: flex-end }
+
+.acx-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px }
+.acx-model {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.acx-model.off { color: var(--faint) }
+.acx-model-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* ── the check-in strip ────────────────────────────────────────────────── */
+.acx-strip {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 16px var(--pad);
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-strip-main { flex: 1 1 200px; min-width: 0 }
+.acx-strip b { display: block; font-size: 14px; font-weight: 500 }
+.acx-strip span { display: block; font-size: 12.5px; color: var(--faint); margin-top: 2px }
+
+.acx-switch {
+  appearance: none;
+  width: 38px; height: 22px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--rule);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  transition: background-color .16s ease;
+}
+.acx-switch i {
+  position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform .16s ease;
+}
+.acx-switch[aria-checked="true"] { background: var(--ok) }
+.acx-switch[aria-checked="true"] i { transform: translateX(16px); background: var(--ground) }
+
+/* ── the API panel ─────────────────────────────────────────────────────── */
+.acx-api {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px var(--pad) 20px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-api-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap }
+.acx-api-headmain { flex: 1 1 200px; min-width: 0 }
+.acx-api-headmain b { display: block; font-size: 14px; font-weight: 500 }
+.acx-api-headmain span { display: block; font-size: 12.5px; color: var(--faint); margin-top: 2px }
+
+/* The address and key are read-and-copy values, not inputs: monospace is
+   correct here, because these are literal strings a user pastes elsewhere. */
+.acx-apifields { display: flex; flex-direction: column; gap: 8px }
+.acx-apifield {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.acx-apifield-label { font-size: 12px; color: var(--faint) }
+.acx-apifield-acts { display: flex; gap: 2px; justify-self: end }
+.acx-apifield code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--raised);
+  border-radius: 7px;
+  padding: 7px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── the LAN front door, inside the API panel ───────────────────────────── */
+.acx-lan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.acx-lan-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap }
+.acx-lan-main { flex: 1 1 200px; min-width: 0 }
+.acx-lan-main b { display: block; font-size: 14px; font-weight: 500 }
+.acx-lan-main span { display: block; font-size: 12.5px; color: var(--faint); margin-top: 2px }
+.acx-lan-alts { display: flex; flex-direction: column; gap: 4px; padding-left: 96px }
+.acx-lan-alt { display: flex; align-items: center; gap: 10px }
+.acx-lan-alt code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+/* ── usage: the token ledger, one bar per day ──────────────────────────── */
+.acx-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px var(--pad) 20px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-usage-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap }
+.acx-usage-head b { flex: 1 1 auto; font-size: 14px; font-weight: 500 }
+
+.acx-seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--raised); border-radius: 999px }
+.acx-seg button {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.acx-seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink) }
+
+.acx-usage-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px }
+.acx-usage-stat b {
+  display: block;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.acx-usage-stat span { display: block; margin-top: 2px; font-size: 12px; color: var(--faint) }
+.acx-usage-stat i { display: block; margin-top: 1px; font-size: 11px; font-style: normal; color: var(--faint) }
+
+/* The bars are the day series: height carries the magnitude, the tooltip the
+   exact figure. Square-ish columns, no gradient, one hue on the data only. */
+.acx-usage-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 76px;
+  padding-top: 6px;
+}
+.acx-usage-bar {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+.acx-usage-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 3px;
+  background: var(--credit);
+  opacity: .82;
+  min-height: 0;
+}
+.acx-usage-bar:hover i { opacity: 1 }
+.acx-usage-bar span {
+  font-size: 9.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.acx-usage-chans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+.acx-usage-chan { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px }
+.acx-usage-chan-name { color: var(--muted) }
+.acx-usage-chan-val { color: var(--ink); font-variant-numeric: tabular-nums }
+.acx-usage-chan-req { color: var(--faint); font-size: 11.5px }
+
+/* ── states ────────────────────────────────────────────────────────────── */
+.acx-note { margin: 0; font-size: 13px; color: var(--muted) }
+.acx-note.bad { color: var(--bad) }
+.acx-empty {
+  padding: 28px var(--pad);
+  text-align: center;
+  font-size: 13px;
+  color: var(--faint);
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.acx-skel { height: 12px; border-radius: 6px; background: var(--raised); animation: acx-pulse 1.4s ease-in-out infinite }
+@keyframes acx-pulse { 0%, 100% { opacity: .55 } 50% { opacity: .95 } }
+.acx-skel-stack { display: flex; flex-direction: column; gap: 10px; padding: 20px var(--pad); background: var(--surface); border-radius: var(--radius) }
+
+/* ── the login dialog ──────────────────────────────────────────────────── */
+.acx-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: color-mix(in srgb, #000 52%, transparent);
+  display: grid; place-items: center;
+  padding: 24px;
+}
+.acx-modal {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.acx-modal h3 { margin: 0; font-size: 17px; font-weight: 600 }
+.acx-modal p { margin: 0; font-size: 13px; color: var(--muted) }
+.acx-modal code {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--faint);
+  background: var(--raised);
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-height: 90px;
+  overflow: auto;
+}
+.acx-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px }
+
+/* ── the phone ─────────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .acx { gap: 20px }
+  .acx-head { gap: 12px }
+  .acx-title { font-size: 21px }
+  /* The action row wraps under the title instead of squeezing it: at 390px a
+     side-by-side pair pushes the primary button off the screen edge. */
+  .acx-head-acts { width: 100%; gap: 6px }
+  .acx-head-acts .acx-btn { flex: 1 1 0; min-width: 0; padding: 0 10px }
+  .acx-figures { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .acx-figure b { font-size: 21px }
+  /* The check-in strip's status wraps under its description rather than being
+     pushed past the right edge by the text it sits beside. */
+  .acx-strip { gap: 10px 14px }
+  .acx-strip-main { flex: 1 1 100% }
+  .acx-strip .acx-state { margin-left: 52px }
+  .acx-thead { display: none }
+  /* Two lines per row: the name and state on top, the three figures beneath,
+     each with its own label so a bare "1/1" is never ambiguous. The figures are
+     one flex line inside a full-width subgrid area — laying them out as three
+     more grid cells made each label wrap onto its own line. */
+  .acx-row-main {
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-areas:
+      "mark id"
+      "mark state"
+      "nums nums";
+    row-gap: 3px;
+    padding: 13px 14px;
+    min-height: 0;
+  }
+  .acx-mark { grid-area: mark; align-self: start; margin-top: 2px }
+  .acx-id { grid-area: id }
+  .acx-state { grid-area: state; font-size: 12px }
+  .acx-caret { display: none }
+  /* The three figures become one flex line spanning the row. */
+  .acx-nums { display: flex; grid-area: nums; gap: 18px; margin-top: 7px }
+  .acx-num { display: inline-flex; align-items: baseline; gap: 4px; font-size: 12.5px; text-align: left }
+  .acx-num::before {
+    content: attr(data-label);
+    font-size: 10.5px;
+    color: var(--faint);
+    font-variant-numeric: normal;
+    white-space: nowrap;
+  }
+  .acx-fold { padding: 0 14px 16px 14px }
+  .acx-acct { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; padding: 8px 0 }
+  .acx-acct-meta { grid-column: 1 }
+  .acx-acct-acts { grid-column: 2; grid-row: 1 / span 2; align-self: center }
+  /* The label sits above its value on a phone: an 84px label column leaves too
+     little for the key, and a truncated key is useless to copy by eye. */
+  .acx-apifield { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px }
+  .acx-apifield-label { grid-column: 1 }
+  .acx-apifield code { grid-column: 1; grid-row: 2 }
+  .acx-apifield .acx-btn, .acx-apifield .acx-apifield-acts { grid-column: 2; grid-row: 1 / span 2; align-self: center }
+  .acx-usage-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px }
+  .acx-usage-stat b { font-size: 18px }
+  .acx-usage-bars { height: 62px }
+  /* Every other day label, so fourteen dates do not collide at 390px. */
+  .acx-usage-bar:nth-child(even) span { visibility: hidden }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acx-btn, .acx-row-main, .acx-caret, .acx-switch, .acx-switch i { transition: none }
+  .acx-skel { animation: none }
+  .acx-btn:active:not(:disabled) { transform: none }
+}
