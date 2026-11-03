@@ -248,29 +248,21 @@ if (typeof route?.handler === 'function') {
   const connection = { rpc }
 
   /**
-   * Run one tick through the real fibers.
+   * Run one tick through the real fiber.
    *
-   * The background jobs live on a nested `inject(['connection'])` fiber, so the
-   * stub has to forward `inject` the way cordis does — running the callback
-   * immediately with a scope that now carries `connection`.
+   * The background jobs live on their own top-level `inject(['connection'])`
+   * fiber (the same one the pack itself uses), so this scope carries the
+   * `connection` stub directly as the injected service.
    */
-  const tickScope = () => {
-    const scope = {
-      logger: ctx.logger,
-      effect: (fn, label) => runEffect(fn, label),
-      get: key => (key === 'connection' ? connection : services.get(key)),
-      provide: () => {},
-      emit: () => {},
-      on: () => {},
-      credentials: { resolve: async () => undefined },
-      commands: { register: () => {} },
-      llm: { listProviders: async () => [], listModels: async () => [] },
-    }
-    // Nesting: the plugin calls scoped.inject(['connection'], cb); hand cb a
-    // scope whose `connection` is the stub.
-    scope.inject = (names, callback) => callback({ ...scope, connection })
-    return scope
-  }
+  const tickScope = () => ({
+    logger: ctx.logger,
+    effect: (fn, label) => runEffect(fn, label),
+    get: key => (key === 'connection' ? connection : services.get(key)),
+    provide: () => {},
+    emit: () => {},
+    on: () => {},
+    connection,
+  })
 
   // The fiber arms a timer; the test drives the tick directly rather than
   // waiting an hour, so it re-uses the module's own logic through the interval
@@ -341,12 +333,8 @@ if (typeof route?.handler === 'function') {
     effect: (fn, label) => runEffect(fn, label),
     get: key => (key === 'connection' ? connection : services.get(key)),
     provide: () => {}, emit: () => {}, on: () => {},
-    credentials: { resolve: async () => undefined },
-    commands: { register: () => {} },
-    llm: { listProviders: async () => [], listModels: async () => [] },
+    connection,
   }
-  // Forward nested inject the way cordis does.
-  scope.inject = (names, callback) => callback({ ...scope, connection })
 
   /** Capture the setTimeout the pass schedules, then run it on demand. */
   const armed = []

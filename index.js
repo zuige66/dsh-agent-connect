@@ -466,98 +466,102 @@ export function apply(ctx, config = {}) {
    * so an hourly tick costs one comparison on the days it has nothing to do.
    */
   const CHECKIN_TICK_MS = 60 * 60 * 1000
-  ctx.inject(['credentials', 'commands', 'llm'], scoped => {
-    // The two background jobs talk to the pack over the composition's own
-    // `connection` RPC. It gets its own nested fiber, exactly as the pack does,
-    // because a fiber only resolves the services it declared: a `get` for
-    // something undeclared is not a lookup this can rely on.
-    scoped.inject(['connection'], conn => {
-      /**
-       * One RPC round trip to the pack.
-       *
-       * @param {string} method
-       * @param {object} payload
-       * @returns {Promise<unknown>} the pack's `value`, or `undefined`
-       */
-      const call = async (method, payload) => {
-        const rpc = conn.connection?.rpc
-        if (rpc === undefined || typeof rpc.call !== 'function') return undefined
-        const result = await rpc.call.call(rpc, '/api', 'channel-pack', { method, payload }, undefined)
-        return result?.ok === true ? result.value : undefined
-      }
+  // The two background jobs are their own top-level fiber, declared exactly the
+  // way the channel pack declares itself (`inject(['connection'])`), so this
+  // fiber sees the same inter-plugin RPC transport the pack does. A fiber only
+  // resolves the services it declares; reaching into a sibling fiber for
+  // `connection` is not something to rely on, and a nested `inject` does not
+  // pick up the parent's services the way these jobs need.
+  ctx.inject(['connection'], conn => {
+    /**
+     * One RPC round trip to the pack.
+     *
+     * Mirror of the browser half's `useChannelRpc`; this one carries no
+     * transport handoff because the jobs are best-effort and the pack is
+     * process-local (no navigation to time out).
+     *
+     * @param {string} method
+     * @param {object} payload
+     * @returns {Promise<unknown>} the pack's `value`, or `undefined`
+     */
+    const call = async (method, payload) => {
+      const rpc = conn.connection?.rpc
+      if (rpc === undefined || typeof rpc.call !== 'function') return undefined
+      const result = await rpc.call.call(rpc, '/api', 'channel-pack', { method, payload }, undefined)
+      return result?.ok === true ? result.value : undefined
+    }
 
-      /**
-       * Make every model visible on first mount.
-       *
-       * The pack's default is already "all shown" — it stores *hidden* models in
-       * `state.json`'s `disabledModels`, so an empty map means everything is on.
-       * This pass exists for the case where that map holds entries the user never
-       * meant to keep: a channel whose whole catalog is hidden shows no models in
-       * the picker at all, and from the page it looks like the channel broke.
-       *
-       * It runs **once, shortly after the pack mounts**, and only against
-       * channels that report at least one model. Turning a model off afterwards
-       * sticks: this never runs again in the session, so the Models tab is still
-       * the place that decides what is hidden.
-       */
-      const showAllModels = async () => {
-        let touched = 0
-        for (const channel of CHANNEL_IDS) {
-          try {
-            const listed = await call('model.list', { provider: channel })
-            const models = Array.isArray(listed?.models) ? listed.models : []
-            // Nothing to do for a channel with no account, and nothing to *fix*
-            // for one that already shows its models.
-            if (models.length === 0) continue
-            if (models.some(model => model.disabled !== true)) continue
-            await call('model.setAllDisabled', { provider: channel, disabled: false })
-            touched += 1
-          } catch {
-            // A channel without an account, or whose catalog has not loaded yet,
-            // simply has nothing to enable.
-          }
-        }
-        if (touched > 0) logger.info?.(`agent-channels: re-enabled models on ${touched} channel(s)`)
-      }
-
-      /**
-       * Ask the pack to run today's check-in if it has not run yet.
-       *
-       * Two calls on purpose. `usage.autoCheckin` with no `enabled` field is a
-       * pure read; passing `enabled: true` goes through `setEnabled`, which
-       * **saves the state file** and then runs the check-in. Firing that every
-       * hour would rewrite `auto-checkin.json` 24 times a day for nothing, so the
-       * read gates the write.
-       */
-      const tick = async () => {
+    /**
+     * Make every model visible on first mount.
+     *
+     * The pack's default is already "all shown" — it stores *hidden* models in
+     * `state.json`'s `disabledModels`, so an empty map means everything is on.
+     * This pass exists for the case where that map holds entries the user never
+     * meant to keep: a channel whose whole catalog is hidden shows no models in
+     * the picker at all, and from the page it looks like the channel broke.
+     *
+     * It runs **once, shortly after the pack mounts**, and only against
+     * channels that report at least one model. Turning a model off afterwards
+     * sticks: this never runs again in the session, so the Models tab is still
+     * the place that decides what is hidden.
+     */
+    const showAllModels = async () => {
+      let touched = 0
+      for (const channel of CHANNEL_IDS) {
         try {
-          const state = (await call('usage.autoCheckin', {}))?.autoCheckin
-          // Nothing to do: already ran today, switched off, or a run is in flight.
-          if (state === undefined || state.ranToday === true || state.enabled === false || state.running === true) return
-          logger.info?.('agent-channels: running the daily check-in')
-          await call('usage.autoCheckin', { enabled: true })
+          const listed = await call('model.list', { provider: channel })
+          const models = Array.isArray(listed?.models) ? listed.models : []
+          // Nothing to do for a channel with no account, and nothing to *fix*
+          // for one that already shows its models.
+          if (models.length === 0) continue
+          if (models.some(model => model.disabled !== true)) continue
+          await call('model.setAllDisabled', { provider: channel, disabled: false })
+          touched += 1
         } catch {
-          // A pack that has not finished mounting simply tries again next tick.
+          // A channel without an account, or whose catalog has not loaded yet,
+          // simply has nothing to enable.
         }
       }
+      if (touched > 0) logger.info?.(`agent-channels: re-enabled models on ${touched} channel(s)`)
+    }
 
-      // One pass 20 s after mount: long enough for the adapters to register and
-      // the catalog to load, short enough that a user who opens the page right
-      // after a restart sees their models rather than an empty picker.
-      conn.effect(() => {
-        const handle = setTimeout(() => void showAllModels(), 20_000)
-        handle.unref?.()
-        return () => clearTimeout(handle)
-      }, 'agent-channels: show all models on first mount')
+    /**
+     * Ask the pack to run today's check-in if it has not run yet.
+     *
+     * Two calls on purpose. `usage.autoCheckin` with no `enabled` field is a
+     * pure read; passing `enabled: true` goes through `setEnabled`, which
+     * **saves the state file** and then runs the check-in. Firing that every
+     * hour would rewrite `auto-checkin.json` 24 times a day for nothing, so the
+     * read gates the write.
+     */
+    const tick = async () => {
+      try {
+        const state = (await call('usage.autoCheckin', {}))?.autoCheckin
+        // Nothing to do: already ran today, switched off, or a run is in flight.
+        if (state === undefined || state.ranToday === true || state.enabled === false || state.running === true) return
+        logger.info?.('agent-channels: running the daily check-in')
+        await call('usage.autoCheckin', { enabled: true })
+      } catch {
+        // A pack that has not finished mounting simply tries again next tick.
+      }
+    }
 
-      conn.effect(() => {
-        const timer = setInterval(() => void tick(), CHECKIN_TICK_MS)
-        timer.unref?.()
-        return () => clearInterval(timer)
-      }, 'agent-channels: daily check-in tick')
+    // One pass 20 s after mount: long enough for the adapters to register and
+    // the catalog to load, short enough that a user who opens the page right
+    // after a restart sees their models rather than an empty picker.
+    conn.effect(() => {
+      const handle = setTimeout(() => void showAllModels(), 20_000)
+      handle.unref?.()
+      return () => clearTimeout(handle)
+    }, 'agent-channels: show all models on first mount')
 
-      logger.info?.('agent-channels: background jobs armed (daily check-in + model defaults)')
-    })
+    conn.effect(() => {
+      const timer = setInterval(() => void tick(), CHECKIN_TICK_MS)
+      timer.unref?.()
+      return () => clearInterval(timer)
+    }, 'agent-channels: daily check-in tick')
+
+    logger.info?.('agent-channels: background jobs armed (daily check-in + model defaults)')
   })
 
   /**
