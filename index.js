@@ -496,30 +496,53 @@ export function apply(ctx, config = {}) {
      *
      * The pack's default is already "all shown" — it stores *hidden* models in
      * `state.json`'s `disabledModels`, so an empty map means everything is on.
-     * This pass exists for the case where that map holds entries the user never
-     * meant to keep: a channel whose whole catalog is hidden shows no models in
-     * the picker at all, and from the page it looks like the channel broke.
+     * This pass exists because an older install left entries the user never
+     * meant to keep: the domestic WorkBuddy channel (`buddy`) had every paid /
+     * high-multiplier model (GLM, Kimi, MiniMax, DeepSeek-V4-Pro …) hidden, so
+     * the picker only showed the eight free low-cost ones and the channel looked
+     * broken. Those models are perfectly usable — hiding them was a leftover
+     * blacklist, not a capability limit.
      *
-     * It runs **once, shortly after the pack mounts**, and only against
-     * channels that report at least one model. Turning a model off afterwards
-     * sticks: this never runs again in the session, so the Models tab is still
-     * the place that decides what is hidden.
+     * Two things are repaired, once, shortly after the pack mounts:
+     *   - any channel whose **whole** catalog is hidden (the original rescue:
+     *     an empty picker otherwise looks like a dead channel);
+     *   - on the very first run of this plugin, the `buddy` channel's leftover
+     *     hidden list — this is the "default all checked" migration.
+     *
+     * A marker file makes the second rule strictly one-shot. After it exists,
+     * turning a model off sticks: only the all-hidden rescue remains, so the
+     * Models tab is still the place that decides what is hidden. We deliberately
+     * do not blanket-clear `workbuddy` / `trae`: their hidden lists include
+     * paid GPT/Gemini models the free accounts genuinely cannot call.
      */
+    const markerPath = path.join(os.homedir(), '.dsh', 'channel-pack', '.agent-connect-default-all-v1')
+    const firstRun = !fs.existsSync(markerPath)
+
     const showAllModels = async () => {
       let touched = 0
       for (const channel of CHANNEL_IDS) {
         try {
           const listed = await call('model.list', { provider: channel })
           const models = Array.isArray(listed?.models) ? listed.models : []
-          // Nothing to do for a channel with no account, and nothing to *fix*
-          // for one that already shows its models.
           if (models.length === 0) continue
-          if (models.some(model => model.disabled !== true)) continue
+          const hidden = models.filter(model => model.disabled === true)
+          const allHidden = hidden.length === models.length
+          const migrateBuddy = firstRun && channel === 'buddy' && hidden.length > 0
+          if (!allHidden && !migrateBuddy) continue
           await call('model.setAllDisabled', { provider: channel, disabled: false })
           touched += 1
         } catch {
           // A channel without an account, or whose catalog has not loaded yet,
           // simply has nothing to enable.
+        }
+      }
+      if (firstRun) {
+        try {
+          fs.mkdirSync(path.dirname(markerPath), { recursive: true })
+          fs.writeFileSync(markerPath, new Date().toISOString())
+        } catch {
+          // Read-only home: the in-memory pass still applied, and a later boot
+          // would simply retry — never fatal.
         }
       }
       if (touched > 0) logger.info?.(`agent-channels: re-enabled models on ${touched} channel(s)`)

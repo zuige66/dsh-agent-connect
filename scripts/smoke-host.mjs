@@ -15,6 +15,8 @@
  */
 
 import http from 'node:http'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
@@ -27,6 +29,13 @@ function check(condition, message) {
 }
 
 // ── load the module ─────────────────────────────────────────────────────────
+// The plugin writes a one-shot marker under `~/.dsh/channel-pack/` to make its
+// "default all models checked" migration run exactly once. Point `os.homedir()`
+// at a throwaway directory *before* importing `index.js`, and never let this
+// test touch the real user home.
+const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-agent-connect-smoke-'))
+os.homedir = () => tempHome
+
 const mod = await import(pathToFileURL(path.join(root, 'index.js')).href)
 
 check(mod.name === 'agent-channels', `name is ${JSON.stringify(mod.name)}, expected "agent-channels"`)
@@ -310,13 +319,17 @@ if (typeof route?.handler === 'function') {
 }
 
 // ── the "show all models" pass ─────────────────────────────────────────────
-// The property that matters: it only re-enables a channel whose **entire**
-// catalog is hidden. A channel that shows even one model is left alone, so a
-// deliberate choice to hide a model survives the pass.
+// Two properties, both driven through the real fiber:
+//   - on the FIRST run, the `buddy` channel's leftover hidden list is cleared
+//     even when the channel still shows some models (the "default all checked"
+//     migration), and a wholly-hidden channel is rescued too;
+//   - once the marker exists, a partly-hidden channel is left alone — only the
+//     wholly-hidden rescue remains — so the user's later choices stick.
 {
   /** One scripted answer per channel, plus every call made. */
   let catalog = {}
   const seen = []
+  const markerPath = path.join(tempHome, '.dsh', 'channel-pack', '.agent-connect-default-all-v1')
 
   const rpc = {
     call: async (_base, _endpoint, request) => {
@@ -336,39 +349,55 @@ if (typeof route?.handler === 'function') {
     connection,
   }
 
-  /** Capture the setTimeout the pass schedules, then run it on demand. */
-  const armed = []
-  const originalSetTimeout = globalThis.setTimeout
-  globalThis.setTimeout = (fn, ms) => { armed.push({ fn, ms }); return 0 }
-  try {
-    tickInject.callback(scope)
-  } finally {
-    globalThis.setTimeout = originalSetTimeout
+  /** Arm the fiber and capture the model-pass timer it schedules. */
+  const armPass = () => {
+    const captured = []
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = (fn, ms) => { captured.push({ fn, ms }); return 0 }
+    try {
+      tickInject.callback(scope)
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+    return captured
   }
 
-  check(armed.length === 1, `the model pass armed ${armed.length} timer(s), expected 1`)
-  check(armed[0]?.ms === 20_000, `the model pass delays ${armed[0]?.ms}ms, expected 20000`)
+  const first = armPass()
+  check(first.length === 1, `the model pass armed ${first.length} timer(s), expected 1`)
+  check(first[0]?.ms === 20_000, `the model pass delays ${first[0]?.ms}ms, expected 20000`)
 
-  if (armed.length > 0) {
-    // Three shapes: a fully hidden channel (must be re-enabled), a partly
-    // hidden one (must be left alone), and one with no models at all (skip).
+  if (first.length > 0) {
+    // First run: buddy is only PARTLY hidden (one visible, one hidden) and must
+    // still be cleared by the migration; workbuddy is wholly hidden and is
+    // rescued; trae has no models and is skipped.
     catalog = {
-      buddy: [{ id: 'a', disabled: true }, { id: 'b', disabled: true }],
-      workbuddy: [{ id: 'c' }, { id: 'd', disabled: true }],
+      buddy: [{ id: 'a', disabled: true }, { id: 'b' }],
+      workbuddy: [{ id: 'c', disabled: true }, { id: 'd', disabled: true }],
       trae: [],
     }
     seen.length = 0
-    await armed[0].fn()
+    await first[0].fn()
     await new Promise(resolve => setTimeout(resolve, 60))
 
-    const writes = seen.filter(row => row.method === 'model.setAllDisabled')
-    check(writes.length === 1, `${writes.length} channel(s) were re-enabled, expected exactly 1`)
-    check(writes[0]?.provider === 'buddy', `re-enabled ${writes[0]?.provider}, expected buddy (the fully hidden one)`)
-    check(writes[0]?.disabled === false, 'the re-enable did not pass disabled: false')
+    const firstWrites = seen.filter(row => row.method === 'model.setAllDisabled')
+    check(firstWrites.length === 2, `first run re-enabled ${firstWrites.length} channel(s), expected 2 (buddy migration + workbuddy rescue)`)
+    check(firstWrites.some(row => row.provider === 'buddy' && row.disabled === false), 'first run did not clear the partly-hidden buddy channel')
+    check(firstWrites.some(row => row.provider === 'workbuddy' && row.disabled === false), 'first run did not rescue the wholly-hidden workbuddy channel')
+    check(fs.existsSync(markerPath), 'first run did not write the one-shot marker')
 
-    // The partly-hidden channel must never have been written to.
-    const touchedWorkbuddy = writes.some(row => row.provider === 'workbuddy')
-    check(touchedWorkbuddy === false, 'a partly-hidden channel was re-enabled, overriding the user\'s choice')
+    // Second boot: re-run the fiber so firstRun is recomputed with the marker
+    // present. buddy (partly hidden) must be left alone; workbuddy (still
+    // wholly hidden in this scripted catalog) is rescued.
+    const second = armPass()
+    check(second.length === 1, `the second boot armed ${second.length} timer(s), expected 1`)
+    seen.length = 0
+    await second[0].fn()
+    await new Promise(resolve => setTimeout(resolve, 60))
+
+    const secondWrites = seen.filter(row => row.method === 'model.setAllDisabled')
+    check(secondWrites.length === 1, `second run re-enabled ${secondWrites.length} channel(s), expected 1 (wholly-hidden rescue only)`)
+    check(secondWrites[0]?.provider === 'workbuddy', `second run re-enabled ${secondWrites[0]?.provider}, expected workbuddy`)
+    check(!secondWrites.some(row => row.provider === 'buddy'), 'a later boot re-enabled a partly-hidden buddy channel, overriding the user choice')
   }
 }
 
