@@ -452,18 +452,14 @@ export function apply(ctx, config = {}) {
 
   // ── a daily tick for the pack's check-in ──────────────────────────────────
   /**
-   * The pack's own scheduler fires **once**, `DSH_CHANNEL_PACK_AUTO_CHECKIN_DELAY_MS`
-   * after startup (30 s by default), then never again: `runIfDue` is called from
-   * `start`, from the enable switch, and from the RPC — nothing loops.
-   *
-   * So a machine left running across midnight checks in on day one and silently
-   * misses every day after it. That is the whole failure mode this timer exists
-   * for, and it is why the tick is hourly rather than at a fixed hour: waking
-   * from sleep, crossing a timezone, or starting at 23:59 all resolve on the
-   * next tick instead of waiting for a wall-clock moment that may have passed.
-   *
-   * `runIfDue` is idempotent — it returns immediately when `lastDate` is today —
-   * so an hourly tick costs one comparison on the days it has nothing to do.
+   * The pack now runs `runIfDue` hourly itself (see `createAutoCheckin` in
+   * vendor/channel-pack/pack.js), which is the primary fix for a machine left
+   * running across UTC+8 midnight. This host-side tick is a second, independent
+   * path: it goes through the same `usage.autoCheckin` RPC the settings page
+   * uses, so it still triggers a check-in if the pack's in-process timer is
+   * ever lost (e.g. a pack reload). `usage.autoCheckin` is idempotent — a read
+   * gates the write, and the pack's `runIfDue` refuses a same-day second run —
+   * so an hourly tick costs nothing on the days it has nothing to do.
    */
   const CHECKIN_TICK_MS = 60 * 60 * 1000
   // The two background jobs are their own top-level fiber, declared exactly the
@@ -485,7 +481,12 @@ export function apply(ctx, config = {}) {
      * @returns {Promise<unknown>} the pack's `value`, or `undefined`
      */
     const call = async (method, payload) => {
-      const rpc = conn.connection?.rpc
+      // Mirror the pack's own lookup: the injected service may be exposed as a
+      // property *or* only through `get()`. `registerChannelPackEndpoints` uses
+      // exactly `ctx.connection ?? ctx.get("connection")`, so do the same here
+      // instead of assuming the fiber's context carries a `.connection` field.
+      const connection = conn.connection ?? conn.get?.('connection')
+      const rpc = connection?.rpc
       if (rpc === undefined || typeof rpc.call !== 'function') return undefined
       const result = await rpc.call.call(rpc, '/api', 'channel-pack', { method, payload }, undefined)
       return result?.ok === true ? result.value : undefined

@@ -60349,6 +60349,11 @@ function utc8DateString(nowMs = Date.now()) {
 }
 var DSH_CHANNEL_PACK_AUTO_CHECKIN_DELAY_MS = "DSH_CHANNEL_PACK_AUTO_CHECKIN_DELAY_MS";
 var AUTO_CHECKIN_DELAY_MS = 3e4;
+// The one-shot startup fire only covers the day the process started. Re-run
+// `runIfDue` hourly so a machine left running across UTC+8 midnight, or woken
+// from sleep, still claims the next day's credits. `runIfDue` is idempotent
+// (inflight / enabled / lastDate gates), so an idle tick is one comparison.
+var AUTO_CHECKIN_REPEAT_MS = 60 * 60 * 1e3;
 function autoCheckinDelayMs(env = process.env) {
   const raw = env[DSH_CHANNEL_PACK_AUTO_CHECKIN_DELAY_MS];
   if (typeof raw !== "string" || raw.trim().length === 0) return AUTO_CHECKIN_DELAY_MS;
@@ -60450,6 +60455,7 @@ function createAutoCheckin(deps) {
   let running2 = false;
   let inflight = null;
   let pending = null;
+  let repeat = null;
   const today = () => utc8DateString(now());
   function state() {
     return {
@@ -60564,17 +60570,21 @@ function createAutoCheckin(deps) {
       return state();
     },
     start() {
-      if (pending !== null) return;
+      if (repeat !== null) return;
       const ms = deps.delayMs ?? autoCheckinDelayMs();
       const fire = () => {
         pending = null;
         void runIfDue();
       };
-      if (ms <= 0) {
+      if (ms > 0) {
+        pending = (deps.schedule ?? defaultSchedule)(fire, ms);
+      } else {
         fire();
-        return;
       }
-      pending = (deps.schedule ?? defaultSchedule)(fire, ms);
+      // The one-shot fire above only covers the day the process started. The
+      // hourly repeat is what makes "daily" true across UTC+8 midnight and
+      // sleep/wake; `runIfDue` gates each tick, so idle ticks are free.
+      repeat = (deps.repeatSchedule ?? defaultRepeatSchedule)(() => void runIfDue(), deps.repeatMs ?? AUTO_CHECKIN_REPEAT_MS);
     },
     runIfDue,
     async dismiss() {
@@ -60589,6 +60599,8 @@ function createAutoCheckin(deps) {
     stop() {
       pending?.cancel();
       pending = null;
+      repeat?.cancel();
+      repeat = null;
     }
   };
 }
@@ -60596,6 +60608,11 @@ function defaultSchedule(fn, ms) {
   const timer = setTimeout(fn, ms);
   timer.unref?.();
   return { cancel: () => clearTimeout(timer) };
+}
+function defaultRepeatSchedule(fn, ms) {
+  const timer = setInterval(fn, ms);
+  timer.unref?.();
+  return { cancel: () => clearInterval(timer) };
 }
 
 // vendor/channel-pack/src/channel-pack-rpc.ts
